@@ -2,25 +2,45 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"golang.org/x/net/proxy"
 	"io"
+	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"time"
 )
 
+type ProxyConfig struct {
+	Type     string
+	Address  string
+	Username string
+	Password string
+}
+
 type HttpClient struct {
-	client  *http.Client
-	domain  string
-	header  map[string]string
-	cookies map[string]string
+	client    *http.Client
+	transport *http.Transport
+	domain    string
+	header    map[string]string
+	cookies   map[string]string
 }
 
 func NewHttpClient(domain string, header map[string]string) *HttpClient {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
 	return &HttpClient{
 		client: &http.Client{
-			Timeout: 10 * http.DefaultClient.Timeout,
+			Transport: transport,
+			Timeout:   30 * time.Second,
 		},
 		domain:  domain,
 		header:  header,
@@ -75,20 +95,77 @@ func (h *HttpClient) DoGet(url string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
+func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
+	domain := h.GetDomain()
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer file.Close()
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	// 写入文件字段
+	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("创建文件字段失败: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("写入文件失败: %w", err)
+	}
+	// 写入额外表单字段
+	for k, v := range extraParams {
+		_ = writer.WriteField(k, v)
+	}
+	// 关闭 writer 以设置 Content-Type 边界
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("关闭 multipart writer 失败: %w", err)
+	}
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/%s", domain, uploadUrl), &requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	if len(h.cookies) > 0 {
+		cookieHeader := ""
+		for k, v := range h.cookies {
+			cookieHeader += fmt.Sprintf("%s=%s; ", k, v)
+		}
+		req.Header.Set("Cookie", cookieHeader)
+	}
+	// 设置头部
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return h.doRequest(req)
+}
+
 func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
+	// 添加已有 cookie 到请求头
+	if len(h.cookies) > 0 {
+		cookieHeader := ""
+		for k, v := range h.cookies {
+			cookieHeader += fmt.Sprintf("%s=%s; ", k, v)
+		}
+		req.Header.Set("Cookie", cookieHeader)
+	}
+	// 执行请求
 	res, err := h.client.Do(req)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("请求失败: %s", err.Error()))
+		return nil, fmt.Errorf("请求失败: %s", err.Error())
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(res.Body)
+	defer res.Body.Close()
+	// 解析响应 Cookie
+	for _, c := range res.Cookies() {
+		h.cookies[c.Name] = c.Value
+	}
+	// 读取响应内容
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("读取失败: %s", err.Error()))
+		return nil, fmt.Errorf("读取失败: %s", err.Error())
 	}
+	// 处理非 200 状态码
 	if res.StatusCode != http.StatusOK {
-		return nil, errors.New(fmt.Sprintf("请求失败: %s", body))
+		return nil, fmt.Errorf("请求失败: %s", string(body))
 	}
 	return body, nil
 }
@@ -102,15 +179,61 @@ func (h *HttpClient) GetDomain() string {
 }
 
 func (h *HttpClient) SetHeader(header map[string]string) {
-	h.header = header
+	headers := h.GetHeader()
+	for k, v := range header {
+		headers[k] = v
+	}
+	h.header = headers
 }
 
 func (h *HttpClient) GetHeader() map[string]string {
 	return h.header
 }
 
+func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
+	if cfg == nil {
+		h.transport.Proxy = nil
+		return nil
+	}
+
+	switch cfg.Type {
+	case "http":
+		proxyURL := &url.URL{
+			Scheme: "http",
+			Host:   cfg.Address,
+		}
+		if cfg.Username != "" && cfg.Password != "" {
+			proxyURL.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		h.transport.Proxy = http.ProxyURL(proxyURL)
+
+	case "socks5":
+		var auth *proxy.Auth
+		if cfg.Username != "" && cfg.Password != "" {
+			auth = &proxy.Auth{
+				User:     cfg.Username,
+				Password: cfg.Password,
+			}
+		}
+		dialer, err := proxy.SOCKS5("tcp", cfg.Address, auth, proxy.Direct)
+		if err != nil {
+			return err
+		}
+		h.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+	default:
+		return fmt.Errorf("unsupported proxy type: %s", cfg.Type)
+	}
+	return nil
+}
+
 func (h *HttpClient) SetCookies(cookies map[string]string) {
-	h.cookies = cookies
+	cookie := h.GetCookies()
+	for k, v := range cookies {
+		cookie[k] = v
+	}
+	h.cookies = cookie
 }
 
 func (h *HttpClient) GetCookies() map[string]string {
