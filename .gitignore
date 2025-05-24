@@ -20,7 +20,8 @@
 # Go workspace file
 go.work
 go.work.sum
-
+examples
+logs
 # env file
 .env
 .idea

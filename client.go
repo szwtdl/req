@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 	"io"
 	"mime/multipart"
@@ -29,9 +30,10 @@ type HttpClient struct {
 	domain    string
 	header    map[string]string
 	cookies   map[string]string
+	logger    *zap.SugaredLogger
 }
 
-func NewHttpClient(domain string, header map[string]string) *HttpClient {
+func NewHttpClient(domain string) *HttpClient {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
@@ -42,9 +44,29 @@ func NewHttpClient(domain string, header map[string]string) *HttpClient {
 			Transport: transport,
 			Timeout:   30 * time.Second,
 		},
-		domain:  domain,
-		header:  header,
+		domain: domain,
+		header: map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+			"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+		},
 		cookies: make(map[string]string),
+		logger:  nil,
+	}
+}
+
+func (h *HttpClient) SetLogger(logger *zap.SugaredLogger) {
+	h.logger = logger
+}
+
+func (h *HttpClient) LogInfo(msg string, fields ...interface{}) {
+	if h.logger != nil {
+		h.logger.Infow(msg, fields...)
+	}
+}
+
+func (h *HttpClient) LogError(msg string, err error) {
+	if h.logger != nil {
+		h.logger.Errorw(msg, "error", err)
 	}
 }
 
@@ -140,6 +162,7 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 }
 
 func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
+	h.LogInfo("请求准备发送", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
 	// 添加已有 cookie 到请求头
 	if len(h.cookies) > 0 {
 		cookieHeader := ""
@@ -151,6 +174,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 	// 执行请求
 	res, err := h.client.Do(req)
 	if err != nil {
+		h.LogInfo("请求失败", zap.Error(err))
 		return nil, fmt.Errorf("请求失败: %s", err.Error())
 	}
 	defer res.Body.Close()
@@ -161,8 +185,10 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 	// 读取响应内容
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
+		h.LogInfo("读取响应失败", zap.Error(err))
 		return nil, fmt.Errorf("读取失败: %s", err.Error())
 	}
+	h.LogInfo("收到响应", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
 	// 处理非 200 状态码
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("请求失败: %s", string(body))
@@ -179,11 +205,10 @@ func (h *HttpClient) GetDomain() string {
 }
 
 func (h *HttpClient) SetHeader(header map[string]string) {
-	headers := h.GetHeader()
 	for k, v := range header {
-		headers[k] = v
+		header[k] = v
 	}
-	h.header = headers
+	h.header = header
 }
 
 func (h *HttpClient) GetHeader() map[string]string {
