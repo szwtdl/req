@@ -121,6 +121,7 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 	domain := h.GetDomain()
 	file, err := os.Open(filePath)
 	if err != nil {
+		h.LogInfo(fmt.Sprintf("failed to open file: %s", filePath))
 		return nil, fmt.Errorf("打开文件失败: %w", err)
 	}
 	defer file.Close()
@@ -129,9 +130,11 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 	// 写入文件字段
 	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 	if err != nil {
+		h.LogInfo(fmt.Sprintf("failed to create form file: %s", filePath))
 		return nil, fmt.Errorf("创建文件字段失败: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
+		h.LogInfo(fmt.Sprintf("failed to copy file: %s", filePath))
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 	// 写入额外表单字段
@@ -140,10 +143,12 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 	}
 	// 关闭 writer 以设置 Content-Type 边界
 	if err := writer.Close(); err != nil {
+		h.LogInfo(fmt.Sprintf("failed to close writer: %s", filePath))
 		return nil, fmt.Errorf("关闭 multipart writer 失败: %w", err)
 	}
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/%s", domain, uploadUrl), &requestBody)
 	if err != nil {
+		h.LogInfo(fmt.Sprintf("failed to create request: %v", err))
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	if len(h.cookies) > 0 {
@@ -189,8 +194,8 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("读取失败: %s", err.Error())
 	}
 	h.LogInfo("收到响应", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
-	// 处理非 200 状态码
 	if res.StatusCode != http.StatusOK {
+		h.LogInfo("请求失败", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
 		return nil, fmt.Errorf("请求失败: %s", string(body))
 	}
 	return body, nil
