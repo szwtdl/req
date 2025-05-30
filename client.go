@@ -37,6 +37,7 @@ func NewHttpClient(domain string) *HttpClient {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
+		DisableKeepAlives:   true,
 		IdleConnTimeout:     90 * time.Second,
 	}
 	return &HttpClient{
@@ -44,7 +45,8 @@ func NewHttpClient(domain string) *HttpClient {
 			Transport: transport,
 			Timeout:   30 * time.Second,
 		},
-		domain: domain,
+		transport: transport,
+		domain:    domain,
 		header: map[string]string{
 			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
@@ -52,6 +54,7 @@ func NewHttpClient(domain string) *HttpClient {
 		cookies: make(map[string]string),
 		logger:  nil,
 	}
+	// Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3
 }
 
 func (h *HttpClient) SetLogger(logger *zap.SugaredLogger) {
@@ -210,10 +213,12 @@ func (h *HttpClient) GetDomain() string {
 }
 
 func (h *HttpClient) SetHeader(header map[string]string) {
-	for k, v := range header {
-		header[k] = v
+	if h.header == nil {
+		h.header = make(map[string]string)
 	}
-	h.header = header
+	for k, v := range header {
+		h.header[k] = v
+	}
 }
 
 func (h *HttpClient) GetHeader() map[string]string {

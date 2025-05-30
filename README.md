@@ -4,8 +4,8 @@
 
 ```go
 import (
-    client "github.com/szwtdl/req"
-    "github.com/szwtdl/req/logger"
+client "github.com/szwtdl/req"
+"github.com/szwtdl/req/logger"
 )
 headers := map[string]string{
     "Content-Type": "application/x-www-form-urlencoded",
@@ -14,6 +14,20 @@ headers := map[string]string{
 HttpClient := client.NewHttpClient("https://api.xxxx.cn")
 httpClient.SetHeader(headers)
 httpClient.SetLogger(logger.GetLogger())
+// http代理
+err := httpClient.SetProxy(&client.ProxyConfig{
+    Type:     "http",
+    Address:  "27.185.204.190:1077",
+    Username: "syt8179945897",
+    Password: "477276",
+})
+// socks5
+err := httpClient.SetProxy(&client.ProxyConfig{
+    Type:     "socks5",
+    Address:  "nu5d46s1.user.wuyouip.com:8011",
+    Username: "NU5d46S1",
+    Password: "5613E4",
+})
 
 ```
 
