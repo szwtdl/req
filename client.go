@@ -33,17 +33,21 @@ type HttpClient struct {
 	logger    *zap.SugaredLogger
 }
 
-func NewHttpClient(domain string) *HttpClient {
+func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
+	defaultTimeout := 30 * time.Second
+	if len(timeout) > 0 && timeout[0] > 0 {
+		defaultTimeout = timeout[0]
+	}
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		DisableKeepAlives:   true,
-		IdleConnTimeout:     90 * time.Second,
+		IdleConnTimeout:     defaultTimeout,
 	}
 	return &HttpClient{
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   30 * time.Second,
+			Timeout:   defaultTimeout,
 		},
 		transport: transport,
 		domain:    domain,
@@ -71,6 +75,16 @@ func (h *HttpClient) LogError(msg string, err error) {
 	if h.logger != nil {
 		h.logger.Errorw(msg, "error", err)
 	}
+}
+
+func (h *HttpClient) SetTimeout(timeout time.Duration) {
+	h.client.Timeout = timeout
+	h.transport.IdleConnTimeout = timeout
+	h.LogInfo("Timeout set", "duration", timeout)
+}
+
+func (h *HttpClient) GetTimeout() time.Duration {
+	return h.client.Timeout
 }
 
 func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte, error) {
@@ -228,6 +242,7 @@ func (h *HttpClient) GetHeader() map[string]string {
 func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 	if cfg == nil {
 		h.transport.Proxy = nil
+		h.transport.DialContext = nil
 		return nil
 	}
 
@@ -241,7 +256,7 @@ func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 			proxyURL.User = url.UserPassword(cfg.Username, cfg.Password)
 		}
 		h.transport.Proxy = http.ProxyURL(proxyURL)
-
+		h.transport.DialContext = nil // 确保不再使用 SOCKS5 Dialer
 	case "socks5":
 		var auth *proxy.Auth
 		if cfg.Username != "" && cfg.Password != "" {
@@ -254,6 +269,7 @@ func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 		if err != nil {
 			return err
 		}
+		h.transport.Proxy = nil // 确保不再使用 HTTP Proxy
 		h.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		}
