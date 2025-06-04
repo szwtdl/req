@@ -211,10 +211,6 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("读取失败: %s", err.Error())
 	}
 	h.LogInfo("收到响应", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
-	if res.StatusCode != http.StatusOK {
-		h.LogInfo("请求失败", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
-		return nil, fmt.Errorf("请求失败: %s", string(body))
-	}
 	return body, nil
 }
 
