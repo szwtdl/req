@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -58,7 +59,6 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 		cookies: make(map[string]string),
 		logger:  nil,
 	}
-	// Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3
 }
 
 func (h *HttpClient) SetLogger(logger *zap.SugaredLogger) {
@@ -110,8 +110,13 @@ func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte,
 	default:
 		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
 	}
-	domain := h.GetDomain()
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/%s", domain, postUrl), bytes.NewReader(data))
+	var fullUrl string
+	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
+		fullUrl = postUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+	}
+	req, err := http.NewRequest("POST", fullUrl, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
@@ -121,9 +126,14 @@ func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte,
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DoGet(url string) ([]byte, error) {
-	domain := h.GetDomain()
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/%s", domain, url), nil)
+func (h *HttpClient) DoGet(postUrl string) ([]byte, error) {
+	var fullUrl string
+	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
+		fullUrl = postUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+	}
+	req, err := http.NewRequest("GET", fullUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
@@ -134,8 +144,62 @@ func (h *HttpClient) DoGet(url string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
-	domain := h.GetDomain()
+func (h *HttpClient) DoPostAny(postUrl string, postData interface{}) ([]byte, error) {
+	headers := h.GetHeader()
+	contentType, exists := headers["Content-Type"]
+	if !exists {
+		contentType = "application/json"
+	}
+	if contentType != "application/json" {
+		return nil, fmt.Errorf("DoPostAny only supports application/json")
+	}
+	data, err := json.Marshal(postData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	var fullUrl string
+	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
+		fullUrl = postUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+	}
+
+	req, err := http.NewRequest("POST", fullUrl, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return h.doRequest(req)
+}
+
+func (h *HttpClient) DoPostRaw(postUrl string, rawBody string) ([]byte, error) {
+	var fullUrl string
+	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
+		fullUrl = postUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+	}
+	req, err := http.NewRequest("POST", fullUrl, bytes.NewBufferString(rawBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	// 设置请求头
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	h.LogInfo("请求体内容", "raw", rawBody)
+	return h.doRequest(req)
+}
+
+func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
+	var fullUrl string
+	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
+		fullUrl = postUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		h.LogInfo(fmt.Sprintf("failed to open file: %s", filePath))
@@ -144,7 +208,11 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 	defer file.Close()
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
-	// 写入文件字段
+	// 先写入额外表单字段
+	for k, v := range extraParams {
+		_ = writer.WriteField(k, v)
+	}
+	// 再写入文件字段
 	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 	if err != nil {
 		h.LogInfo(fmt.Sprintf("failed to create form file: %s", filePath))
@@ -154,16 +222,12 @@ func (h *HttpClient) UploadFile(uploadUrl, fieldName, filePath string, extraPara
 		h.LogInfo(fmt.Sprintf("failed to copy file: %s", filePath))
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
-	// 写入额外表单字段
-	for k, v := range extraParams {
-		_ = writer.WriteField(k, v)
-	}
 	// 关闭 writer 以设置 Content-Type 边界
 	if err := writer.Close(); err != nil {
 		h.LogInfo(fmt.Sprintf("failed to close writer: %s", filePath))
 		return nil, fmt.Errorf("关闭 multipart writer 失败: %w", err)
 	}
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/%s", domain, uploadUrl), &requestBody)
+	req, err := http.NewRequest("POST", fullUrl, &requestBody)
 	if err != nil {
 		h.LogInfo(fmt.Sprintf("failed to create request: %v", err))
 		return nil, fmt.Errorf("创建请求失败: %w", err)
