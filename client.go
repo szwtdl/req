@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -258,6 +259,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		req.Header.Set("Cookie", cookieHeader)
 	}
 	// 执行请求
+	req.Header.Add("Accept-Encoding", "gzip")
 	res, err := h.client.Do(req)
 	if err != nil {
 		h.LogInfo("请求失败", zap.Error(err))
@@ -268,8 +270,19 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 	for _, c := range res.Cookies() {
 		h.cookies[c.Name] = c.Value
 	}
+	// 判断是否 gzip 压缩
+	var reader io.ReadCloser = res.Body
+	if res.Header.Get("Content-Encoding") == "gzip" {
+		gzReader, err := gzip.NewReader(res.Body)
+		if err != nil {
+			h.LogInfo("解压 gzip 失败", zap.Error(err))
+			return nil, fmt.Errorf("解压 gzip 失败: %s", err.Error())
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	}
 	// 读取响应内容
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		h.LogInfo("读取响应失败", zap.Error(err))
 		return nil, fmt.Errorf("读取失败: %s", err.Error())
