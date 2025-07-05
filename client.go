@@ -43,7 +43,7 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
-		DisableKeepAlives:   true,
+		DisableKeepAlives:   false,
 		IdleConnTimeout:     defaultTimeout,
 	}
 	return &HttpClient{
@@ -362,4 +362,10 @@ func (h *HttpClient) SetCookies(cookies map[string]string) {
 
 func (h *HttpClient) GetCookies() map[string]string {
 	return h.cookies
+}
+
+func (h *HttpClient) Close() {
+	if h.transport != nil {
+		h.transport.CloseIdleConnections()
+	}
 }
