@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ type HttpClient struct {
 	transport *http.Transport
 	domain    string
 	header    map[string]string
-	cookies   map[string]string
+	jar       http.CookieJar
 	logger    *zap.SugaredLogger
 }
 
@@ -46,10 +47,15 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 		DisableKeepAlives:   false,
 		IdleConnTimeout:     defaultTimeout,
 	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		panic(fmt.Errorf("failed to create cookie jar: %v", err))
+	}
 	return &HttpClient{
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   defaultTimeout,
+			Jar:       jar,
 		},
 		transport: transport,
 		domain:    domain,
@@ -57,8 +63,8 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
 		},
-		cookies: make(map[string]string),
-		logger:  nil,
+		jar:    jar,
+		logger: nil,
 	}
 }
 
@@ -233,13 +239,6 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 		h.LogInfo(fmt.Sprintf("failed to create request: %v", err))
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-	if len(h.cookies) > 0 {
-		cookieHeader := ""
-		for k, v := range h.cookies {
-			cookieHeader += fmt.Sprintf("%s=%s; ", k, v)
-		}
-		req.Header.Set("Cookie", cookieHeader)
-	}
 	// 设置头部
 	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
@@ -250,14 +249,6 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 
 func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 	h.LogInfo("请求准备发送", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
-	// 添加已有 cookie 到请求头
-	if len(h.cookies) > 0 {
-		cookieHeader := ""
-		for k, v := range h.cookies {
-			cookieHeader += fmt.Sprintf("%s=%s; ", k, v)
-		}
-		req.Header.Set("Cookie", cookieHeader)
-	}
 	// 执行请求
 	req.Header.Add("Accept-Encoding", "gzip")
 	res, err := h.client.Do(req)
@@ -266,10 +257,6 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("请求失败: %s", err.Error())
 	}
 	defer res.Body.Close()
-	// 解析响应 Cookie
-	for _, c := range res.Cookies() {
-		h.cookies[c.Name] = c.Value
-	}
 	// 判断是否 gzip 压缩
 	var reader io.ReadCloser = res.Body
 	if res.Header.Get("Content-Encoding") == "gzip" {
@@ -352,16 +339,30 @@ func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 	return nil
 }
 
-func (h *HttpClient) SetCookies(cookies map[string]string) {
-	cookie := h.GetCookies()
-	for k, v := range cookies {
-		cookie[k] = v
+func (h *HttpClient) GetCookies() []*http.Cookie {
+	u, err := url.Parse(h.domain)
+	if err != nil {
+		return nil
 	}
-	h.cookies = cookie
+	return h.jar.Cookies(u)
 }
 
-func (h *HttpClient) GetCookies() map[string]string {
-	return h.cookies
+func (h *HttpClient) SetCookies(cookies map[string]string) {
+	u, err := url.Parse(h.domain)
+	if err != nil {
+		h.LogError("SetCookiesMap failed", err)
+		return
+	}
+	var cookieList []*http.Cookie
+	for k, v := range cookies {
+		cookieList = append(cookieList, &http.Cookie{
+			Name:   k,
+			Value:  v,
+			Path:   "/",
+			Domain: u.Host,
+		})
+	}
+	h.jar.SetCookies(u, cookieList)
 }
 
 func (h *HttpClient) Close() {
