@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
 	domain    string
-	header    map[string]string
+	headers   map[string]string
 	jar       http.CookieJar
 	logger    *zap.SugaredLogger
 }
@@ -59,7 +60,7 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 		},
 		transport: transport,
 		domain:    domain,
-		header: map[string]string{
+		headers: map[string]string{
 			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
 		},
@@ -97,18 +98,27 @@ func (h *HttpClient) GetTimeout() time.Duration {
 func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte, error) {
 	var data []byte
 	var err error
+
+	// 获取 header，并统一把 content-type 转为标准写法（首字母大写，其余小写）
 	headers := h.GetHeader()
-	contentType, exists := headers["Content-Type"]
-	if !exists {
+	var contentType string
+	for k, v := range headers {
+		if strings.ToLower(k) == "content-type" {
+			contentType = strings.ToLower(v)
+			break
+		}
+	}
+	if contentType == "" {
 		contentType = "application/json"
 	}
-	switch contentType {
-	case "application/json":
+
+	switch {
+	case strings.HasPrefix(contentType, "application/json"):
 		data, err = json.Marshal(postData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 		}
-	case "application/x-www-form-urlencoded":
+	case strings.HasPrefix(contentType, "application/x-www-form-urlencoded"):
 		postDataValues := make(url.Values)
 		for k, v := range postData {
 			postDataValues.Set(k, ToString(v))
@@ -121,15 +131,17 @@ func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte,
 	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
 		fullUrl = postUrl
 	} else {
-		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
+		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(postUrl, "/"))
 	}
 	req, err := http.NewRequest("POST", fullUrl, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
+	// 统一设置 header，大小写无关
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+
 	return h.doRequest(req)
 }
 
@@ -287,16 +299,17 @@ func (h *HttpClient) GetDomain() string {
 }
 
 func (h *HttpClient) SetHeader(header map[string]string) {
-	if h.header == nil {
-		h.header = make(map[string]string)
+	if h.headers == nil {
+		h.headers = make(map[string]string)
 	}
 	for k, v := range header {
-		h.header[k] = v
+		canonicalKey := textproto.CanonicalMIMEHeaderKey(k)
+		h.headers[canonicalKey] = v
 	}
 }
 
 func (h *HttpClient) GetHeader() map[string]string {
-	return h.header
+	return h.headers
 }
 
 func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
