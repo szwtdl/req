@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	utls "github.com/refraction-networking/utls"
 	"go.uber.org/zap"
 	"golang.org/x/net/proxy"
 	"io"
@@ -64,8 +65,62 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
 		},
-		jar:    jar,
-		logger: nil,
+		jar: jar,
+	}
+}
+
+func (h *HttpClient) EnableJA3(profile string) error {
+	h.LogInfo("EnableJA3 called", "profile", profile)
+	if profile == "" {
+		// 禁用 JA3，恢复默认 transport
+		h.transport.DialTLSContext = nil
+		h.client.Transport = h.transport
+		return nil
+	}
+	h.transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		h.LogInfo("DialTLSContext called", "network", network, "addr", addr)
+		dialer := &net.Dialer{Timeout: h.client.Timeout}
+		rawConn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			h.LogInfo("DialContext failed", "error", err)
+			return nil, err
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			rawConn.Close()
+			h.LogInfo("DialContext failed", "error", err)
+			return nil, fmt.Errorf("invalid addr %s: %v", addr, err)
+		}
+		clientHelloID := getClientHelloID(profile)
+		h.LogInfo("Performing TLS handshake with profile", "clientHelloID", clientHelloID, "host", host)
+		uConn := utls.UClient(rawConn, &utls.Config{ServerName: host}, clientHelloID)
+		if err := uConn.Handshake(); err != nil {
+			rawConn.Close()
+			h.LogInfo("TLS handshake failed", "error", err)
+			return nil, err
+		}
+		h.LogInfo("TLS handshake success", "host", host)
+		return uConn, nil
+	}
+	h.client.Transport = h.transport
+	h.LogInfo("JA3 enabled with profile", "profile", profile)
+	return nil
+}
+
+func getClientHelloID(profile string) utls.ClientHelloID {
+	switch profile {
+	case "chrome":
+		return utls.HelloChrome_120
+	case "firefox":
+		return utls.HelloFirefox_102
+	case "safari":
+		return utls.HelloSafari_16_0
+	case "edge":
+		return utls.HelloEdge_106
+	case "ios":
+		return utls.HelloIOS_14
+	default:
+		return utls.HelloChrome_120
 	}
 }
 
