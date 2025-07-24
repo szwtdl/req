@@ -2,45 +2,78 @@
 
 项目依赖http请求库
 
+
+# 安装
+```bash
+go get -u github.com/szwtdl/req
+```
+
+# 使用
 ```go
+package main
 import (
-client "github.com/szwtdl/req"
-"github.com/szwtdl/req/logger"
+    "fmt"
+	client "github.com/szwtdl/req"
 )
-headers := map[string]string{
-    "Content-Type": "application/x-www-form-urlencoded",
-    "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+func main() {
+    // create a new HttpClient
+	HttpClient := client.NewHttpClient("https://examples.com")
+    // POST请求
+    resp, err = HttpClient.DoPost("post", map[string]string{
+        "name": "req",
+        "age":  "18",
+    })
+    if err != nil {
+        panic(err)
+    }
+	fmt.Println(string(resp))
+	
+	// GET请求
+	resp, err = HttpClient.DoGet("post")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(resp))
+	
 }
-HttpClient := client.NewHttpClient("https://api.xxxx.cn")
-httpClient.SetHeader(headers)
-httpClient.SetLogger(logger.GetLogger())
-// http代理
-err := httpClient.SetProxy(&client.ProxyConfig{
-    Type:     "http",
-    Address:  "27.185.204.190:1077",
-    Username: "syt8179945897",
-    Password: "477276",
-})
-// socks5
-err := httpClient.SetProxy(&client.ProxyConfig{
-    Type:     "socks5",
-    Address:  "nu5d46s1.user.wuyouip.com:8011",
-    Username: "NU5d46S1",
-    Password: "5613E4",
-})
-
 ```
 
-### GET请求
-
+### 代理配置
 ```go
-response, err := client.DoGet("/login.html")
+package main
+import (
+    "fmt"
+    client "github.com/szwtdl/req"
+)
+func main() {
+	// create a new HttpClient with proxy
+	HttpClient := client.NewHttpClient("https://examples.com")
+	// 设置日记
+	HttpClient.SetLogger(logger.GetLogger())
+	// 设置header
+	HttpClient.SetHeader(map[string]string{
+		"Content-Type": "application/json",
+	})
+	// 设置cookies
+	HttpClient.SetCookies(map[string]string{
+		"JSESSIONID": strings.ToUpper(fmt.Sprintf("%v", md5.Sum([]byte("12345678")))),
+	})
+	// 配置 HTTP 代理
+	err := HttpClient.SetProxy(&ProxyConfig{
+		Type:    "http",
+		Address: "proxy.example.com:8080",
+		Username: "proxyuser",  // 可选
+		Password: "proxypass",  // 可选
+	})
+	// 配置 SOCKS5 代理
+	err := HttpClient.SetProxy(&ProxyConfig{
+		Type:    "socks5",
+		Address: "socks.example.com:1080",
+		Username: "proxyuser",  // 可选
+		Password: "proxypass",  // 可选
+	})
+	// 禁用代理
+	HttpClient.SetProxy(nil)
+}
 ```
 
-### POST请求
-
-```go
-response, err := client.DoPost("/xxx.html", map[string]string{
-"data": encryptData,
-})
-```
