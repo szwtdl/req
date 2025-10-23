@@ -427,7 +427,8 @@ func (h *HttpClient) SetCookies(cookies map[string]string) {
 			Name:   k,
 			Value:  v,
 			Path:   "/",
-			Domain: u.Host,
+			Domain: u.Hostname(),
+			Secure: true,
 		})
 	}
 	h.jar.SetCookies(u, cookieList)
