@@ -107,6 +107,15 @@ func (h *HttpClient) EnableJA3(profile string) error {
 	return nil
 }
 
+func (h *HttpClient) DisableJA3() {
+	h.LogInfo("DisableJA3 called")
+	if h.transport != nil {
+		h.transport.DialTLSContext = nil
+		h.client.Transport = h.transport
+	}
+	h.LogInfo("JA3 disabled, using default TLS")
+}
+
 func getClientHelloID(profile string) utls.ClientHelloID {
 	switch profile {
 	case "chrome":
@@ -138,6 +147,46 @@ func (h *HttpClient) LogError(msg string, err error) {
 	if h.logger != nil {
 		h.logger.Errorw(msg, "error", err)
 	}
+}
+
+func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
+	if cfg == nil {
+		h.transport.Proxy = nil
+		h.transport.DialContext = nil
+		return nil
+	}
+
+	switch cfg.Type {
+	case "http":
+		proxyURL := &url.URL{
+			Scheme: "http",
+			Host:   cfg.Address,
+		}
+		if cfg.Username != "" && cfg.Password != "" {
+			proxyURL.User = url.UserPassword(cfg.Username, cfg.Password)
+		}
+		h.transport.Proxy = http.ProxyURL(proxyURL)
+		h.transport.DialContext = nil // 确保不再使用 SOCKS5 Dialer
+	case "socks5":
+		var auth *proxy.Auth
+		if cfg.Username != "" && cfg.Password != "" {
+			auth = &proxy.Auth{
+				User:     cfg.Username,
+				Password: cfg.Password,
+			}
+		}
+		dialer, err := proxy.SOCKS5("tcp", cfg.Address, auth, proxy.Direct)
+		if err != nil {
+			return err
+		}
+		h.transport.Proxy = nil // 确保不再使用 HTTP Proxy
+		h.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+	default:
+		return fmt.Errorf("unsupported proxy type: %s", cfg.Type)
+	}
+	return nil
 }
 
 func (h *HttpClient) SetTimeout(timeout time.Duration) {
@@ -314,16 +363,83 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 	return h.doRequest(req)
 }
 
+func (h *HttpClient) DownloadFile(fileUrl, savePath string) error {
+	h.LogInfo("DownloadFile called", "url", fileUrl, "savePath", savePath)
+	var fullUrl string
+	if strings.HasPrefix(fileUrl, "http://") || strings.HasPrefix(fileUrl, "https://") {
+		fullUrl = fileUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(fileUrl, "/"))
+	}
+	req, err := http.NewRequest("GET", fullUrl, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	// 设置 header
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed, status code: %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(savePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	h.LogInfo("File downloaded successfully", "path", savePath)
+	return nil
+}
+
 func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
-	h.LogInfo("请求准备发送", "method", req.Method, "url", req.URL.String(), "headers", req.Header)
+	// 记录请求体内容（如果有）
+	var requestBody string
+	if req.Body != nil {
+		bodyBytes, err := io.ReadAll(req.Body)
+		if err != nil {
+			h.LogInfo("读取请求体失败", zap.Error(err))
+		} else {
+			requestBody = string(bodyBytes)
+			// 重新生成 req.Body 供 http.Client 使用
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+	}
+
+	h.LogInfo("请求准备发送",
+		"method", req.Method,
+		"url", req.URL.String(),
+		"headers", req.Header,
+		"body", requestBody,
+	)
+
 	// 执行请求
 	req.Header.Add("Accept-Encoding", "gzip")
 	res, err := h.client.Do(req)
 	if err != nil {
-		h.LogInfo("请求失败", zap.Error(err))
+		h.LogInfo("请求失败",
+			"error", err,
+			"method", req.Method,
+			"url", req.URL.String(),
+			"headers", req.Header,
+			"body", requestBody,
+		)
 		return nil, fmt.Errorf("请求失败: %s", err.Error())
 	}
 	defer res.Body.Close()
+
 	// 判断是否 gzip 压缩
 	var reader io.ReadCloser = res.Body
 	if res.Header.Get("Content-Encoding") == "gzip" {
@@ -335,13 +451,44 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		defer gzReader.Close()
 		reader = gzReader
 	}
+
 	// 读取响应内容
 	body, err := io.ReadAll(reader)
 	if err != nil {
-		h.LogInfo("读取响应失败", zap.Error(err))
+		h.LogInfo("读取响应失败",
+			zap.Error(err),
+			"method", req.Method,
+			"url", req.URL.String(),
+			"headers", req.Header,
+			"body", requestBody,
+		)
 		return nil, fmt.Errorf("读取失败: %s", err.Error())
 	}
-	h.LogInfo("收到响应", zap.Int("status", res.StatusCode), zap.String("body", string(body)))
+
+	// 如果状态码非 2xx，也记录完整信息
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		h.LogInfo("请求返回非成功状态",
+			"status", res.StatusCode,
+			"method", req.Method,
+			"url", req.URL.String(),
+			"request_headers", req.Header,
+			"request_body", requestBody,
+			"response_headers", fmt.Sprintf("%v", res.Header),
+			"response_body", string(body),
+		)
+		return body, fmt.Errorf("请求返回非成功状态: %d", res.StatusCode)
+	}
+
+	h.LogInfo("请求成功",
+		"status", res.StatusCode,
+		"method", req.Method,
+		"url", req.URL.String(),
+		"request_headers", req.Header,
+		"request_body", requestBody,
+		"response_headers", fmt.Sprintf("%v", res.Header),
+		"response_body", string(body),
+	)
+
 	return body, nil
 }
 
@@ -353,58 +500,29 @@ func (h *HttpClient) GetDomain() string {
 	return h.domain
 }
 
-func (h *HttpClient) SetHeader(header map[string]string) {
+func (h *HttpClient) SetHeader(headers map[string]string) {
+	for k, v := range headers {
+		h.setHeaderInternal(k, v)
+	}
+}
+
+func (h *HttpClient) AddHeader(name, value string) {
+	h.setHeaderInternal(name, value)
+}
+
+func (h *HttpClient) setHeaderInternal(name, value string) {
 	if h.headers == nil {
 		h.headers = make(map[string]string)
 	}
-	for k, v := range header {
-		canonicalKey := textproto.CanonicalMIMEHeaderKey(k)
-		h.headers[canonicalKey] = v
-	}
+	canonicalKey := textproto.CanonicalMIMEHeaderKey(name)
+	h.headers[canonicalKey] = value
 }
 
 func (h *HttpClient) GetHeader() map[string]string {
+	if h.headers == nil {
+		h.headers = make(map[string]string)
+	}
 	return h.headers
-}
-
-func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
-	if cfg == nil {
-		h.transport.Proxy = nil
-		h.transport.DialContext = nil
-		return nil
-	}
-
-	switch cfg.Type {
-	case "http":
-		proxyURL := &url.URL{
-			Scheme: "http",
-			Host:   cfg.Address,
-		}
-		if cfg.Username != "" && cfg.Password != "" {
-			proxyURL.User = url.UserPassword(cfg.Username, cfg.Password)
-		}
-		h.transport.Proxy = http.ProxyURL(proxyURL)
-		h.transport.DialContext = nil // 确保不再使用 SOCKS5 Dialer
-	case "socks5":
-		var auth *proxy.Auth
-		if cfg.Username != "" && cfg.Password != "" {
-			auth = &proxy.Auth{
-				User:     cfg.Username,
-				Password: cfg.Password,
-			}
-		}
-		dialer, err := proxy.SOCKS5("tcp", cfg.Address, auth, proxy.Direct)
-		if err != nil {
-			return err
-		}
-		h.transport.Proxy = nil // 确保不再使用 HTTP Proxy
-		h.transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		}
-	default:
-		return fmt.Errorf("unsupported proxy type: %s", cfg.Type)
-	}
-	return nil
 }
 
 func (h *HttpClient) GetCookies() []*http.Cookie {
@@ -413,6 +531,20 @@ func (h *HttpClient) GetCookies() []*http.Cookie {
 		return nil
 	}
 	return h.jar.Cookies(u)
+}
+
+func (h *HttpClient) GetCookieValue(name string) string {
+	u, err := url.Parse(h.domain)
+	if err != nil {
+		h.LogError("GetCookieValue failed", err)
+		return ""
+	}
+	for _, c := range h.jar.Cookies(u) {
+		if c.Name == name {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 func (h *HttpClient) SetCookies(cookies map[string]string) {
