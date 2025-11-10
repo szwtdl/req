@@ -70,7 +70,6 @@ func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
 }
 
 func (h *HttpClient) EnableJA3(profile string) error {
-	h.LogInfo("EnableJA3 called", "profile", profile)
 	if profile == "" {
 		// 禁用 JA3，恢复默认 transport
 		h.transport.DialTLSContext = nil
@@ -78,7 +77,6 @@ func (h *HttpClient) EnableJA3(profile string) error {
 		return nil
 	}
 	h.transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		h.LogInfo("DialTLSContext called", "network", network, "addr", addr)
 		dialer := &net.Dialer{Timeout: h.client.Timeout}
 		rawConn, err := dialer.DialContext(ctx, network, addr)
 		if err != nil {
@@ -92,18 +90,15 @@ func (h *HttpClient) EnableJA3(profile string) error {
 			return nil, fmt.Errorf("invalid addr %s: %v", addr, err)
 		}
 		clientHelloID := getClientHelloID(profile)
-		h.LogInfo("Performing TLS handshake with profile", "clientHelloID", clientHelloID, "host", host)
 		uConn := utls.UClient(rawConn, &utls.Config{ServerName: host}, clientHelloID)
 		if err := uConn.Handshake(); err != nil {
 			rawConn.Close()
 			h.LogInfo("TLS handshake failed", "error", err)
 			return nil, err
 		}
-		h.LogInfo("TLS handshake success", "host", host)
 		return uConn, nil
 	}
 	h.client.Transport = h.transport
-	h.LogInfo("JA3 enabled with profile", "profile", profile)
 	return nil
 }
 
