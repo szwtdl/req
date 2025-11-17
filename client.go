@@ -542,11 +542,19 @@ func (h *HttpClient) GetCookieValue(name string) string {
 	return ""
 }
 
-func (h *HttpClient) SetCookies(cookies map[string]string) {
+func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 	u, err := url.Parse(h.domain)
 	if err != nil {
-		h.LogError("SetCookiesMap failed", err)
+		h.LogError("SetCookies failed", err)
 		return
+	}
+	reset := false
+	if len(opts) > 0 {
+		reset = opts[0]
+	}
+	if reset {
+		// 清空当前 URL 下的所有 Cookie
+		h.jar.SetCookies(u, []*http.Cookie{})
 	}
 	var cookieList []*http.Cookie
 	for k, v := range cookies {
