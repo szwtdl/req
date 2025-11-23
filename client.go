@@ -262,6 +262,83 @@ func (h *HttpClient) DoGet(postUrl string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
+func (h *HttpClient) DoPut(putUrl string, putData map[string]string) ([]byte, error) {
+	var data []byte
+	var err error
+
+	// 获取 Content-Type
+	headers := h.GetHeader()
+	var contentType string
+	for k, v := range headers {
+		if strings.ToLower(k) == "content-type" {
+			contentType = strings.ToLower(v)
+			break
+		}
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
+	// 根据 Content-Type 处理数据
+	switch {
+	case strings.HasPrefix(contentType, "application/json"):
+		data, err = json.Marshal(putData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+	case strings.HasPrefix(contentType, "application/x-www-form-urlencoded"):
+		values := make(url.Values)
+		for k, v := range putData {
+			values.Set(k, ToString(v))
+		}
+		data = []byte(values.Encode())
+	default:
+		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
+	}
+
+	// URL 处理
+	var fullUrl string
+	if strings.HasPrefix(putUrl, "http://") || strings.HasPrefix(putUrl, "https://") {
+		fullUrl = putUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(putUrl, "/"))
+	}
+
+	// 构建 PUT 请求
+	req, err := http.NewRequest("PUT", fullUrl, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// 设置头部
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	return h.doRequest(req)
+}
+
+// DoPutRaw 发送原始二进制数据（适用于 OSS 上传）
+func (h *HttpClient) DoPutRaw(putUrl string, raw []byte) ([]byte, error) {
+	// URL 处理
+	var fullUrl string
+	if strings.HasPrefix(putUrl, "http://") || strings.HasPrefix(putUrl, "https://") {
+		fullUrl = putUrl
+	} else {
+		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(putUrl, "/"))
+	}
+	// 构建 PUT 请求
+	req, err := http.NewRequest("PUT", fullUrl, bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+	// 设置头部
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	return h.doRequest(req)
+}
+
 func (h *HttpClient) DoPostAny(postUrl string, postData interface{}) ([]byte, error) {
 	headers := h.GetHeader()
 	contentType, exists := headers["Content-Type"]
@@ -336,12 +413,12 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 		h.LogInfo(fmt.Sprintf("failed to create form file: %s", filePath))
 		return nil, fmt.Errorf("创建文件字段失败: %w", err)
 	}
-	if _, err := io.Copy(part, file); err != nil {
+	if _, err = io.Copy(part, file); err != nil {
 		h.LogInfo(fmt.Sprintf("failed to copy file: %s", filePath))
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 	// 关闭 writer 以设置 Content-Type 边界
-	if err := writer.Close(); err != nil {
+	if err = writer.Close(); err != nil {
 		h.LogInfo(fmt.Sprintf("failed to close writer: %s", filePath))
 		return nil, fmt.Errorf("关闭 multipart writer 失败: %w", err)
 	}
@@ -431,7 +508,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"headers", req.Header,
 			"body", requestBody,
 		)
-		return nil, fmt.Errorf("请求失败: %s", err.Error())
+		return nil, fmt.Errorf("网络请求失败，请稍后重试")
 	}
 	defer res.Body.Close()
 
@@ -441,7 +518,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		gzReader, err := gzip.NewReader(res.Body)
 		if err != nil {
 			h.LogInfo("解压 gzip 失败", zap.Error(err))
-			return nil, fmt.Errorf("解压 gzip 失败: %s", err.Error())
+			return nil, fmt.Errorf("响应解压失败")
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -457,7 +534,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"headers", req.Header,
 			"body", requestBody,
 		)
-		return nil, fmt.Errorf("读取失败: %s", err.Error())
+		return nil, fmt.Errorf("读取服务响应失败")
 	}
 
 	// 如果状态码非 2xx，也记录完整信息
@@ -471,7 +548,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"response_headers", fmt.Sprintf("%v", res.Header),
 			"response_body", string(body),
 		)
-		return body, fmt.Errorf("请求返回非成功状态: %d", res.StatusCode)
+		return body, fmt.Errorf("请求失败：HTTP %d", res.StatusCode)
 	}
 
 	h.LogInfo("请求成功",
