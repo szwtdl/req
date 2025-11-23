@@ -32,10 +32,10 @@ type ProxyConfig struct {
 type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
-	domain    string
-	headers   map[string]string
 	jar       http.CookieJar
 	logger    *zap.SugaredLogger
+	domain    string
+	headers   map[string]string
 }
 
 func NewHttpClient(domain string, timeout ...time.Duration) *HttpClient {
@@ -194,21 +194,17 @@ func (h *HttpClient) GetTimeout() time.Duration {
 	return h.client.Timeout
 }
 
-func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte, error) {
+func (h *HttpClient) DoPost(path string, postData map[string]string) ([]byte, error) {
 	var data []byte
 	var err error
 
-	// 获取 header，并统一把 content-type 转为标准写法（首字母大写，其余小写）
 	headers := h.GetHeader()
-	var contentType string
+	contentType := "application/json"
 	for k, v := range headers {
 		if strings.ToLower(k) == "content-type" {
 			contentType = strings.ToLower(v)
 			break
 		}
-	}
-	if contentType == "" {
-		contentType = "application/json"
 	}
 
 	switch {
@@ -218,25 +214,20 @@ func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte,
 			return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 		}
 	case strings.HasPrefix(contentType, "application/x-www-form-urlencoded"):
-		postDataValues := make(url.Values)
+		values := make(url.Values)
 		for k, v := range postData {
-			postDataValues.Set(k, ToString(v))
+			values.Set(k, ToString(v))
 		}
-		data = []byte(postDataValues.Encode())
+		data = []byte(values.Encode())
 	default:
 		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
 	}
-	var fullUrl string
-	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
-		fullUrl = postUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(postUrl, "/"))
-	}
-	req, err := http.NewRequest("POST", fullUrl, bytes.NewReader(data))
+
+	req, err := http.NewRequest("POST", h.buildFullURL(path), bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	// 统一设置 header，大小写无关
+
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -244,42 +235,31 @@ func (h *HttpClient) DoPost(postUrl string, postData map[string]string) ([]byte,
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DoGet(postUrl string) ([]byte, error) {
-	var fullUrl string
-	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
-		fullUrl = postUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
-	}
+func (h *HttpClient) DoGet(path string) ([]byte, error) {
+	fullUrl := h.buildFullURL(path)
 	req, err := http.NewRequest("GET", fullUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	headers := h.GetHeader()
-	for k, v := range headers {
+	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DoPut(putUrl string, putData map[string]string) ([]byte, error) {
+func (h *HttpClient) DoPut(path string, putData map[string]string) ([]byte, error) {
 	var data []byte
 	var err error
 
-	// 获取 Content-Type
 	headers := h.GetHeader()
-	var contentType string
+	contentType := "application/json"
 	for k, v := range headers {
 		if strings.ToLower(k) == "content-type" {
 			contentType = strings.ToLower(v)
 			break
 		}
 	}
-	if contentType == "" {
-		contentType = "application/json"
-	}
 
-	// 根据 Content-Type 处理数据
 	switch {
 	case strings.HasPrefix(contentType, "application/json"):
 		data, err = json.Marshal(putData)
@@ -296,21 +276,11 @@ func (h *HttpClient) DoPut(putUrl string, putData map[string]string) ([]byte, er
 		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
 	}
 
-	// URL 处理
-	var fullUrl string
-	if strings.HasPrefix(putUrl, "http://") || strings.HasPrefix(putUrl, "https://") {
-		fullUrl = putUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(putUrl, "/"))
-	}
-
-	// 构建 PUT 请求
-	req, err := http.NewRequest("PUT", fullUrl, bytes.NewReader(data))
+	req, err := http.NewRequest("PUT", h.buildFullURL(path), bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
-	// 设置头部
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -319,27 +289,18 @@ func (h *HttpClient) DoPut(putUrl string, putData map[string]string) ([]byte, er
 }
 
 // DoPutRaw 发送原始二进制数据（适用于 OSS 上传）
-func (h *HttpClient) DoPutRaw(putUrl string, raw []byte) ([]byte, error) {
-	// URL 处理
-	var fullUrl string
-	if strings.HasPrefix(putUrl, "http://") || strings.HasPrefix(putUrl, "https://") {
-		fullUrl = putUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(putUrl, "/"))
-	}
-	// 构建 PUT 请求
-	req, err := http.NewRequest("PUT", fullUrl, bytes.NewReader(raw))
+func (h *HttpClient) DoPutRaw(path string, raw []byte) ([]byte, error) {
+	req, err := http.NewRequest("PUT", h.buildFullURL(path), bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	// 设置头部
 	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DoPostAny(postUrl string, postData interface{}) ([]byte, error) {
+func (h *HttpClient) DoPostAny(path string, postData interface{}) ([]byte, error) {
 	headers := h.GetHeader()
 	contentType, exists := headers["Content-Type"]
 	if !exists {
@@ -352,14 +313,7 @@ func (h *HttpClient) DoPostAny(postUrl string, postData interface{}) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	var fullUrl string
-	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
-		fullUrl = postUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
-	}
-
-	req, err := http.NewRequest("POST", fullUrl, bytes.NewReader(data))
+	req, err := http.NewRequest("POST", h.buildFullURL(path), bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
@@ -369,18 +323,11 @@ func (h *HttpClient) DoPostAny(postUrl string, postData interface{}) ([]byte, er
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DoPostRaw(postUrl string, rawBody string) ([]byte, error) {
-	var fullUrl string
-	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
-		fullUrl = postUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
-	}
-	req, err := http.NewRequest("POST", fullUrl, bytes.NewBufferString(rawBody))
+func (h *HttpClient) DoPostRaw(path, rawBody string) ([]byte, error) {
+	req, err := http.NewRequest("POST", h.buildFullURL(path), bytes.NewBufferString(rawBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	// 设置请求头
 	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
 	}
@@ -388,13 +335,7 @@ func (h *HttpClient) DoPostRaw(postUrl string, rawBody string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
-	var fullUrl string
-	if strings.HasPrefix(postUrl, "http://") || strings.HasPrefix(postUrl, "https://") {
-		fullUrl = postUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", h.GetDomain(), postUrl)
-	}
+func (h *HttpClient) UploadFile(path, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		h.LogInfo(fmt.Sprintf("failed to open file: %s", filePath))
@@ -403,31 +344,21 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 	defer file.Close()
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
-	// 先写入额外表单字段
 	for k, v := range extraParams {
 		_ = writer.WriteField(k, v)
 	}
-	// 再写入文件字段
 	part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 	if err != nil {
-		h.LogInfo(fmt.Sprintf("failed to create form file: %s", filePath))
 		return nil, fmt.Errorf("创建文件字段失败: %w", err)
 	}
 	if _, err = io.Copy(part, file); err != nil {
-		h.LogInfo(fmt.Sprintf("failed to copy file: %s", filePath))
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
-	// 关闭 writer 以设置 Content-Type 边界
-	if err = writer.Close(); err != nil {
-		h.LogInfo(fmt.Sprintf("failed to close writer: %s", filePath))
-		return nil, fmt.Errorf("关闭 multipart writer 失败: %w", err)
-	}
-	req, err := http.NewRequest("POST", fullUrl, &requestBody)
+	_ = writer.Close()
+	req, err := http.NewRequest("POST", h.buildFullURL(path), &requestBody)
 	if err != nil {
-		h.LogInfo(fmt.Sprintf("failed to create request: %v", err))
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
-	// 设置头部
 	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
 	}
@@ -435,15 +366,9 @@ func (h *HttpClient) UploadFile(postUrl, fieldName, filePath string, extraParams
 	return h.doRequest(req)
 }
 
-func (h *HttpClient) DownloadFile(fileUrl, savePath string) error {
-	h.LogInfo("DownloadFile called", "url", fileUrl, "savePath", savePath)
-	var fullUrl string
-	if strings.HasPrefix(fileUrl, "http://") || strings.HasPrefix(fileUrl, "https://") {
-		fullUrl = fileUrl
-	} else {
-		fullUrl = fmt.Sprintf("%s/%s", strings.TrimRight(h.GetDomain(), "/"), strings.TrimLeft(fileUrl, "/"))
-	}
-	req, err := http.NewRequest("GET", fullUrl, nil)
+func (h *HttpClient) DownloadFile(path, savePath string) error {
+	h.LogInfo("DownloadFile called", "url", path, "savePath", savePath)
+	req, err := http.NewRequest("GET", h.buildFullURL(path), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -634,13 +559,17 @@ func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 		h.jar.SetCookies(u, []*http.Cookie{})
 	}
 	var cookieList []*http.Cookie
+	secure := false
+	if u.Scheme == "https" {
+		secure = true
+	}
 	for k, v := range cookies {
 		cookieList = append(cookieList, &http.Cookie{
 			Name:   k,
 			Value:  v,
 			Path:   "/",
 			Domain: u.Hostname(),
-			Secure: true,
+			Secure: secure,
 		})
 	}
 	h.jar.SetCookies(u, cookieList)
@@ -650,4 +579,13 @@ func (h *HttpClient) Close() {
 	if h.transport != nil {
 		h.transport.CloseIdleConnections()
 	}
+}
+
+func (h *HttpClient) buildFullURL(path string) string {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	domain := strings.TrimRight(h.GetDomain(), "/")
+	path = strings.TrimLeft(path, "/")
+	return fmt.Sprintf("%s/%s", domain, path)
 }
