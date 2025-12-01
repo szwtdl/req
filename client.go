@@ -433,7 +433,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"headers", req.Header,
 			"body", requestBody,
 		)
-		return nil, fmt.Errorf("网络请求失败，请稍后重试")
+		return nil, err
 	}
 	defer res.Body.Close()
 
@@ -443,7 +443,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 		gzReader, err := gzip.NewReader(res.Body)
 		if err != nil {
 			h.LogInfo("解压 gzip 失败", zap.Error(err))
-			return nil, fmt.Errorf("响应解压失败")
+			return nil, err
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -459,7 +459,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"headers", req.Header,
 			"body", requestBody,
 		)
-		return nil, fmt.Errorf("读取服务响应失败")
+		return nil, err
 	}
 
 	// 如果状态码非 2xx，也记录完整信息
@@ -473,7 +473,7 @@ func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
 			"response_headers", fmt.Sprintf("%v", res.Header),
 			"response_body", string(body),
 		)
-		return body, fmt.Errorf("请求失败：HTTP %d", res.StatusCode)
+		return body, err
 	}
 
 	h.LogInfo("请求成功",
