@@ -335,6 +335,45 @@ func (h *HttpClient) DoPostRaw(path, rawBody string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
+func (h *HttpClient) DoGetRaw(path string) ([]byte, error) {
+	req, err := http.NewRequest("GET", h.buildFullURL(path), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GET request: %w", err)
+	}
+	// 设置 headers
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	h.LogInfo("GET 请求准备发送", "url", req.URL.String(), "headers", req.Header)
+	// 调用内部请求方法
+	return h.doRequest(req)
+}
+
+func (h *HttpClient) DoPostMultipart(path string, fields map[string]string) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// 写普通字段
+	for k, v := range fields {
+		_ = writer.WriteField(k, v)
+	}
+
+	_ = writer.Close()
+
+	req, err := http.NewRequest("POST", h.buildFullURL(path), &buf)
+	if err != nil {
+		return nil, err
+	}
+
+	// 设置 header
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	return h.doRequest(req)
+}
+
 func (h *HttpClient) UploadFile(path, fieldName, filePath string, extraParams map[string]string) ([]byte, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
