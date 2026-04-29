@@ -2,6 +2,7 @@ package client
 
 import (
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 )
 
@@ -29,7 +30,7 @@ func (h *HttpClient) GetCookieValue(name string) string {
 	return ""
 }
 
-// SetCookies 设置默认域名下的 Cookie；reset=true 时先清空已有 Cookie。
+// SetCookies 设置默认域名下的 Cookie；reset=true 时重新创建 CookieJar，彻底清除已有 Cookie。
 func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 	u, err := url.Parse(h.domain)
 	if err != nil {
@@ -37,7 +38,9 @@ func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 		return
 	}
 	if len(opts) > 0 && opts[0] {
-		h.jar.SetCookies(u, []*http.Cookie{})
+		newJar, _ := cookiejar.New(nil)
+		h.jar = newJar
+		h.client.Jar = newJar
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie
@@ -72,7 +75,7 @@ func (h *HttpClient) GetCookieValueFor(rawURL, name string) string {
 	return ""
 }
 
-// SetCookiesFor 设置指定 URL 域名下的 Cookie（多域名场景）；reset=true 时先清空。
+// SetCookiesFor 设置指定 URL 域名下的 Cookie（多域名场景）；reset=true 时重新创建 CookieJar。
 func (h *HttpClient) SetCookiesFor(rawURL string, cookies map[string]string, opts ...bool) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -80,7 +83,9 @@ func (h *HttpClient) SetCookiesFor(rawURL string, cookies map[string]string, opt
 		return
 	}
 	if len(opts) > 0 && opts[0] {
-		h.jar.SetCookies(u, []*http.Cookie{})
+		newJar, _ := cookiejar.New(nil)
+		h.jar = newJar
+		h.client.Jar = newJar
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie

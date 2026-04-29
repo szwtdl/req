@@ -23,13 +23,15 @@ func NewSession() *Session {
 }
 
 // SetCookies 设置指定 URL 域名下的 Cookie。
+// reset=true 时重新创建 CookieJar，彻底清除所有已有 Cookie。
 func (s *Session) SetCookies(rawURL string, cookies map[string]string, reset ...bool) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return
 	}
 	if len(reset) > 0 && reset[0] {
-		s.jar.SetCookies(u, []*http.Cookie{})
+		newJar, _ := cookiejar.New(nil)
+		s.jar = newJar
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie
