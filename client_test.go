@@ -259,6 +259,32 @@ func TestSetDomain_AndGetDomain(t *testing.T) {
 	}
 }
 
+// ----- SetLogger / IsLoggerEnabled -----
+
+func TestIsLoggerEnabled_DefaultDisabled(t *testing.T) {
+	c := NewHttpClient("http://example.com")
+	if c.IsLoggerEnabled() {
+		t.Fatal("logger should be disabled by default")
+	}
+}
+
+func TestIsLoggerEnabled_AfterSetLogger(t *testing.T) {
+	c := NewHttpClient("http://example.com")
+	c.SetLogger(setupLogger())
+	if !c.IsLoggerEnabled() {
+		t.Fatal("logger should be enabled after SetLogger")
+	}
+}
+
+func TestIsLoggerEnabled_AfterSetLoggerNil(t *testing.T) {
+	c := NewHttpClient("http://example.com")
+	c.SetLogger(setupLogger())
+	c.SetLogger(nil)
+	if c.IsLoggerEnabled() {
+		t.Fatal("logger should be disabled after SetLogger(nil)")
+	}
+}
+
 // ----- buildFullURL -----
 
 func TestBuildFullURL_AbsoluteURL(t *testing.T) {
@@ -317,4 +343,3 @@ func TestDoGet_HeaderPassthrough(t *testing.T) {
 		t.Fatalf("DoGet failed: %v", err)
 	}
 }
-

@@ -19,7 +19,7 @@ type HttpClient struct {
 	logger    *zap.SugaredLogger
 	domain    string
 	headers   map[string]string
-	mu        sync.RWMutex // 保护 headers 和 domain
+	mu        sync.RWMutex  // 保护 headers、domain 和 logger
 	semaphore chan struct{} // 并发限速，nil 表示不限
 }
 
@@ -105,20 +105,35 @@ func (h *HttpClient) GetDomain() string {
 
 // SetLogger 设置日志记录器。
 func (h *HttpClient) SetLogger(logger *zap.SugaredLogger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.logger = logger
+}
+
+// IsLoggerEnabled 返回是否已设置日志记录器。
+func (h *HttpClient) IsLoggerEnabled() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.logger != nil
 }
 
 // LogInfo 输出 Info 级别日志。
 func (h *HttpClient) LogInfo(msg string, fields ...interface{}) {
-	if h.logger != nil {
-		h.logger.Infow(msg, fields...)
+	h.mu.RLock()
+	logger := h.logger
+	h.mu.RUnlock()
+	if logger != nil {
+		logger.Infow(msg, fields...)
 	}
 }
 
 // LogError 输出 Error 级别日志。
 func (h *HttpClient) LogError(msg string, err error) {
-	if h.logger != nil {
-		h.logger.Errorw(msg, "error", err)
+	h.mu.RLock()
+	logger := h.logger
+	h.mu.RUnlock()
+	if logger != nil {
+		logger.Errorw(msg, "error", err)
 	}
 }
 

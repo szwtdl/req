@@ -12,6 +12,28 @@ func TestSetCookies_AndGetCookieValue(t *testing.T) {
 	}
 }
 
+func TestSetCookie_AndGetCookieValue(t *testing.T) {
+	c := NewHttpClient("https://example.com")
+	c.SetCookie("session", "abc")
+	if c.GetCookieValue("session") != "abc" {
+		t.Fatal("GetCookieValue should return 'abc' after SetCookie")
+	}
+}
+
+func TestSetCookie_OverridesExistingCookie(t *testing.T) {
+	c := NewHttpClient("https://example.com")
+	c.SetCookie("session", "old")
+	c.SetCookie("session", "new")
+	if c.GetCookieValue("session") != "new" {
+		t.Fatal("SetCookie should override an existing cookie with the same name")
+	}
+}
+
+func TestSetCookie_InvalidDomain(t *testing.T) {
+	c := NewHttpClient("://bad-url")
+	c.SetCookie("k", "v") // 不应 panic
+}
+
 func TestGetCookieValue_NotFound(t *testing.T) {
 	c := NewHttpClient("https://example.com")
 	if c.GetCookieValue("nonexistent") != "" {
@@ -121,4 +143,3 @@ func TestSetCookies_NonSecureFlag(t *testing.T) {
 		t.Fatal("http domain cookie p should be readable")
 	}
 }
-

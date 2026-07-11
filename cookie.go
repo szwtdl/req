@@ -30,6 +30,11 @@ func (h *HttpClient) GetCookieValue(name string) string {
 	return ""
 }
 
+// SetCookie 设置默认域名下的单个 Cookie。
+func (h *HttpClient) SetCookie(name, value string) {
+	h.SetCookies(map[string]string{name: value})
+}
+
 // SetCookies 设置默认域名下的 Cookie；reset=true 时重新创建 CookieJar，彻底清除已有 Cookie。
 func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 	u, err := url.Parse(h.domain)
@@ -96,4 +101,3 @@ func (h *HttpClient) SetCookiesFor(rawURL string, cookies map[string]string, opt
 	}
 	h.jar.SetCookies(u, list)
 }
-
