@@ -278,6 +278,68 @@ func (h *HttpClient) DoGetWithSession(s *Session, path string) ([]byte, error) {
 	return h.doRequestWith(req, h.clientWithSession(s))
 }
 
+// DoGetRedirect 发送 GET 请求并阻止跟随重定向，返回 3xx 响应的 Location 跳转链接。
+// 若响应非 3xx 或没有 Location 头，返回空字符串。
+func (h *HttpClient) DoGetRedirect(path string) (string, error) {
+	return h.doGetRedirect(path, nil)
+}
+
+// DoGetRedirectWithSession 使用独立 Session 发送 GET 请求并阻止跟随重定向，返回 Location 跳转链接。
+func (h *HttpClient) DoGetRedirectWithSession(s *Session, path string) (string, error) {
+	return h.doGetRedirect(path, s)
+}
+
+// doGetRedirect 执行不跟随重定向的 GET 请求，返回 Location 头。
+func (h *HttpClient) doGetRedirect(path string, s *Session) (string, error) {
+	req, err := http.NewRequest("GET", h.buildFullURL(path), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+	headers := h.GetHeader()
+	if s != nil {
+		for k, v := range s.getHeaders() {
+			headers[k] = v
+		}
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// 构建不跟随重定向的 client
+	c := &http.Client{
+		Transport: h.transport,
+		Timeout:   h.client.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // 阻止跟随重定向
+		},
+	}
+	if s != nil {
+		c.Jar = s.jar
+	} else {
+		c.Jar = h.jar
+	}
+
+	// 并发限速
+	if h.semaphore != nil {
+		h.semaphore <- struct{}{}
+		defer func() { <-h.semaphore }()
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	location := resp.Header.Get("Location")
+	h.LogInfo("获取重定向链接",
+		"status", resp.StatusCode,
+		"url", req.URL.String(),
+		"location", location,
+	)
+	return location, nil
+}
+
 // DoPostWithSession 使用独立 Session（独立 CookieJar）发送 POST 请求。
 func (h *HttpClient) DoPostWithSession(s *Session, path string, postData map[string]string) ([]byte, error) {
 	headers := h.GetHeader()
@@ -324,4 +386,3 @@ func encodeBody(headers map[string]string, data map[string]string) ([]byte, erro
 		return nil, fmt.Errorf("unsupported Content-Type: %s", contentType)
 	}
 }
-
