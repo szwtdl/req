@@ -14,6 +14,13 @@ func (h *HttpClient) AddHeader(name, value string) {
 	h.setHeaderInternal(name, value)
 }
 
+// RemoveHeader 删除指定请求头。
+func (h *HttpClient) RemoveHeader(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.headers, textproto.CanonicalMIMEHeaderKey(name))
+}
+
 // setHeaderInternal 线程安全地写入单个请求头（key 规范化为 Canonical-MIME 格式）。
 func (h *HttpClient) setHeaderInternal(name, value string) {
 	h.mu.Lock()
