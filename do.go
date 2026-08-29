@@ -28,6 +28,13 @@ func (h *HttpClient) clientWithSession(s *Session) *http.Client {
 
 // doRequestWith 执行实际 HTTP 请求，包含并发限速、自动解压、错误重试及详细日志。
 func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, error) {
+	body, _, err := h.doRequestWithHeader(req, c)
+	return body, err
+}
+
+// doRequestWithHeader 执行实际 HTTP 请求，包含并发限速、自动解压、错误重试及详细日志，
+// 并额外返回响应头（供下载类接口读取 Content-Disposition 等）。
+func (h *HttpClient) doRequestWithHeader(req *http.Request, c *http.Client) ([]byte, http.Header, error) {
 	// 并发限速
 	if h.semaphore != nil {
 		h.semaphore <- struct{}{}
@@ -96,17 +103,17 @@ func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, e
 		)
 		switch {
 		case IsTimeoutError(err):
-			return nil, errors.New("请求超时")
+			return nil, nil, errors.New("请求超时")
 		case IsDNSError(err):
-			return nil, errors.New("地址错误")
+			return nil, nil, errors.New("地址错误")
 		case IsConnectionRefused(err):
-			return nil, errors.New("连接被拒绝")
+			return nil, nil, errors.New("连接被拒绝")
 		case IsNetworkUnreachable(err):
-			return nil, errors.New("网络不可达")
+			return nil, nil, errors.New("网络不可达")
 		case IsInvalidAddressError(err):
-			return nil, errors.New("无效的 URL 或地址")
+			return nil, nil, errors.New("无效的 URL 或地址")
 		default:
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	defer res.Body.Close()
@@ -116,7 +123,7 @@ func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, e
 		gzReader, err := gzip.NewReader(res.Body)
 		if err != nil {
 			h.LogInfo("解压 gzip 失败", zap.Error(err))
-			return nil, err
+			return nil, nil, err
 		}
 		defer gzReader.Close()
 		reader = gzReader
@@ -129,7 +136,7 @@ func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, e
 			"method", req.Method,
 			"url", req.URL.String(),
 		)
-		return nil, err
+		return nil, nil, err
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
@@ -142,7 +149,7 @@ func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, e
 			"response_headers", fmt.Sprintf("%v", res.Header),
 			"response_body", string(body),
 		)
-		return body, nil
+		return body, res.Header, nil
 	}
 
 	h.LogInfo("请求成功",
@@ -155,6 +162,5 @@ func (h *HttpClient) doRequestWith(req *http.Request, c *http.Client) ([]byte, e
 		"response_body", string(body),
 	)
 
-	return body, nil
+	return body, res.Header, nil
 }
-

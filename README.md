@@ -113,6 +113,21 @@ resp, err := c.DoGet("https://other.example.com/api/data")
 resp, err := c.DoGetRaw("/api/users?page=1")
 ```
 
+### GET Raw With Header（返回响应头，适合下载类接口）
+
+```go
+body, headers, err := c.DoGetRawWithHeader("/api/download")
+if err != nil {
+    panic(err)
+}
+
+// 读取响应头中的文件信息（如 Content-Disposition: attachment; filename="report.pdf"）
+disposition := headers.Get("Content-Disposition")
+fmt.Println("响应头:", disposition, "下载内容长度:", len(body))
+```
+
+> 注意：非 2xx 状态码（如 404/403 错误页）也会返回 `err == nil`，调用方需自行通过 `headers` 或内容判断是否成功。
+
 ### POST（JSON / Form，根据 Content-Type 自动选择）
 
 ```go
@@ -250,6 +265,10 @@ c.AddHeader("X-Custom-Header", "custom-value")
 // 读取当前所有 header（返回副本，线程安全）
 headers := c.GetHeader()
 fmt.Println(headers)
+
+// 大小写不敏感地读取单个 Header 值（不存在时返回空字符串）
+auth := c.GetHeaderValue("Authorization")
+fmt.Println(auth)
 ```
 
 ---
@@ -424,7 +443,7 @@ c.SetProxy(nil)
 
 | profile   | 对应浏览器       |
 |-----------|-----------------|
-| `chrome`  | Chrome 120      |
+| `chrome`  | Chrome 133      |
 | `firefox` | Firefox 102     |
 | `safari`  | Safari 16.0     |
 | `edge`    | Edge 106        |

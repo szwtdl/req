@@ -35,6 +35,20 @@ func (h *HttpClient) DoGetRaw(path string) ([]byte, error) {
 	return h.doRequest(req)
 }
 
+// DoGetRawWithHeader 发送 GET 请求并返回响应头（带详细日志）。
+// 用于下载类接口读取响应头（如 Content-Disposition 的 fileName）。
+func (h *HttpClient) DoGetRawWithHeader(path string) ([]byte, http.Header, error) {
+	req, err := http.NewRequest("GET", h.buildFullURL(path), nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GET request: %w", err)
+	}
+	for k, v := range h.GetHeader() {
+		req.Header.Set(k, v)
+	}
+	h.LogInfo("GET 请求准备发送", "url", req.URL.String(), "headers", req.Header)
+	return h.doRequestWithHeader(req, h.client)
+}
+
 // DoPost 发送 POST 请求，根据 Content-Type 自动序列化（JSON / form）。
 func (h *HttpClient) DoPost(path string, postData map[string]string) ([]byte, error) {
 	data, err := encodeBody(h.GetHeader(), postData)
@@ -49,6 +63,16 @@ func (h *HttpClient) DoPost(path string, postData map[string]string) ([]byte, er
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
+}
+
+func (h *HttpClient) GetHeaderValue(name string) string {
+	headers := h.GetHeader()
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
 }
 
 // DoPostAny 发送 POST 请求，body 支持任意结构体（仅 JSON）。

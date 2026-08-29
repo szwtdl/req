@@ -130,7 +130,8 @@ func (h *HttpClient) DisableJA3() {
 func getClientHelloID(profile string) utls.ClientHelloID {
 	switch profile {
 	case "chrome":
-		return utls.HelloChrome_120
+		// 用 uTLS 支持的最新 Chrome 指纹（Chrome 120 已被部分网关风控识别为旧版 → 伪装 404）
+		return utls.HelloChrome_133
 	case "firefox":
 		return utls.HelloFirefox_102
 	case "safari":
@@ -140,7 +141,7 @@ func getClientHelloID(profile string) utls.ClientHelloID {
 	case "ios":
 		return utls.HelloIOS_14
 	default:
-		return utls.HelloChrome_120
+		return utls.HelloChrome_133
 	}
 }
 
@@ -155,4 +156,3 @@ func (h *HttpClient) SetTimeout(timeout time.Duration) {
 func (h *HttpClient) GetTimeout() time.Duration {
 	return h.client.Timeout
 }
-
