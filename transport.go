@@ -12,7 +12,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// SetProxy 配置代理（nil 表示清除代理）。支持 "http" 和 "socks5" 两种类型。
+// SetProxy 仅允许在发送请求前配置，运行期间不可修改共享 Transport。
+// 配置代理（nil 表示清除代理）。支持 "http" 和 "socks5" 两种类型。
 func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 	if cfg == nil {
 		h.transport.Proxy = nil
@@ -59,7 +60,8 @@ func (h *HttpClient) SetProxy(cfg *ProxyConfig) error {
 	return nil
 }
 
-// EnableJA3 开启 JA3 TLS 指纹模拟；profile 为空时等同于 DisableJA3。
+// EnableJA3 仅允许在发送请求前配置。
+// 开启 JA3 TLS 指纹模拟；profile 为空时等同于 DisableJA3。
 // 支持：chrome、firefox、safari、edge、ios。
 func (h *HttpClient) EnableJA3(profile string) error {
 	if profile == "" {
@@ -145,7 +147,7 @@ func getClientHelloID(profile string) utls.ClientHelloID {
 	}
 }
 
-// SetTimeout 设置请求超时时间。
+// SetTimeout 在发送请求前设置默认超时；单次请求超时请使用 Do 的 context。
 func (h *HttpClient) SetTimeout(timeout time.Duration) {
 	h.client.Timeout = timeout
 	h.transport.IdleConnTimeout = timeout

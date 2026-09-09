@@ -46,12 +46,13 @@ func (h *HttpClient) DoGetRawWithHeader(path string) ([]byte, http.Header, error
 		req.Header.Set(k, v)
 	}
 	h.LogInfo("GET 请求准备发送", "url", req.URL.String(), "headers", req.Header)
-	return h.doRequestWithHeader(req, h.client)
+	return h.doRequestWithHeader(req, h.defaultClient())
 }
 
 // DoPost 发送 POST 请求，根据 Content-Type 自动序列化（JSON / form）。
 func (h *HttpClient) DoPost(path string, postData map[string]string) ([]byte, error) {
-	data, err := encodeBody(h.GetHeader(), postData)
+	headers := h.GetHeader()
+	data, err := encodeBody(headers, postData)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ func (h *HttpClient) DoPost(path string, postData map[string]string) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	for k, v := range h.GetHeader() {
+	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
@@ -134,7 +135,8 @@ func (h *HttpClient) DoPostMultipart(path string, fields map[string]string) ([]b
 
 // DoPut 发送 PUT 请求，根据 Content-Type 自动序列化（JSON / form）。
 func (h *HttpClient) DoPut(path string, putData map[string]string) ([]byte, error) {
-	data, err := encodeBody(h.GetHeader(), putData)
+	headers := h.GetHeader()
+	data, err := encodeBody(headers, putData)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +144,7 @@ func (h *HttpClient) DoPut(path string, putData map[string]string) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	for k, v := range h.GetHeader() {
+	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
@@ -201,7 +203,8 @@ func (h *HttpClient) DoDeleteRaw(path, rawBody string) ([]byte, error) {
 
 // DoPatch 发送 PATCH 请求，根据 Content-Type 自动序列化（JSON / form）。
 func (h *HttpClient) DoPatch(path string, patchData map[string]string) ([]byte, error) {
-	data, err := encodeBody(h.GetHeader(), patchData)
+	headers := h.GetHeader()
+	data, err := encodeBody(headers, patchData)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,7 @@ func (h *HttpClient) DoPatch(path string, patchData map[string]string) ([]byte, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	for k, v := range h.GetHeader() {
+	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	return h.doRequest(req)
@@ -257,7 +260,7 @@ func (h *HttpClient) DoHead(path string) (http.Header, error) {
 		defer func() { <-h.semaphore }()
 	}
 	req.Header.Set("Accept-Encoding", "gzip")
-	resp, err := h.client.Do(req)
+	resp, err := h.defaultClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +281,7 @@ func (h *HttpClient) DoOptions(path string) (http.Header, error) {
 		h.semaphore <- struct{}{}
 		defer func() { <-h.semaphore }()
 	}
-	resp, err := h.client.Do(req)
+	resp, err := h.defaultClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -338,9 +341,9 @@ func (h *HttpClient) doGetRedirect(path string, s *Session) (string, error) {
 		},
 	}
 	if s != nil {
-		c.Jar = s.jar
+		c.Jar = s.getJar()
 	} else {
-		c.Jar = h.jar
+		c.Jar = h.defaultJar()
 	}
 
 	// 并发限速

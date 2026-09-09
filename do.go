@@ -14,7 +14,7 @@ import (
 
 // doRequest 使用默认 client 执行请求。
 func (h *HttpClient) doRequest(req *http.Request) ([]byte, error) {
-	return h.doRequestWith(req, h.client)
+	return h.doRequestWith(req, h.defaultClient())
 }
 
 // clientWithSession 使用 Session 的 jar 创建一个临时 http.Client（共享 transport）。
@@ -22,7 +22,7 @@ func (h *HttpClient) clientWithSession(s *Session) *http.Client {
 	return &http.Client{
 		Transport: h.transport,
 		Timeout:   h.client.Timeout,
-		Jar:       s.jar,
+		Jar:       s.getJar(),
 	}
 }
 

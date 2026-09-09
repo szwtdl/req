@@ -16,6 +16,7 @@ type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
 	jar       http.CookieJar
+	session   *Session // 显式业务会话；初始化后不更换指针
 	logger    *zap.SugaredLogger
 	domain    string
 	headers   map[string]string

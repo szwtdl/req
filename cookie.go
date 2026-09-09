@@ -8,21 +8,21 @@ import (
 
 // GetCookies 返回默认域名下的所有 Cookie。
 func (h *HttpClient) GetCookies() []*http.Cookie {
-	u, err := url.Parse(h.domain)
+	u, err := url.Parse(h.GetDomain())
 	if err != nil {
 		return nil
 	}
-	return h.jar.Cookies(u)
+	return h.defaultJar().Cookies(u)
 }
 
 // GetCookieValue 返回默认域名下指定名称 Cookie 的值。
 func (h *HttpClient) GetCookieValue(name string) string {
-	u, err := url.Parse(h.domain)
+	u, err := url.Parse(h.GetDomain())
 	if err != nil {
 		h.LogError("GetCookieValue failed", err)
 		return ""
 	}
-	for _, c := range h.jar.Cookies(u) {
+	for _, c := range h.defaultJar().Cookies(u) {
 		if c.Name == name {
 			return c.Value
 		}
@@ -37,15 +37,14 @@ func (h *HttpClient) SetCookie(name, value string) {
 
 // SetCookies 设置默认域名下的 Cookie；reset=true 时重新创建 CookieJar，彻底清除已有 Cookie。
 func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
-	u, err := url.Parse(h.domain)
+	u, err := url.Parse(h.GetDomain())
 	if err != nil {
 		h.LogError("SetCookies failed", err)
 		return
 	}
 	if len(opts) > 0 && opts[0] {
 		newJar, _ := cookiejar.New(nil)
-		h.jar = newJar
-		h.client.Jar = newJar
+		h.replaceJar(newJar)
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie
@@ -58,7 +57,7 @@ func (h *HttpClient) SetCookies(cookies map[string]string, opts ...bool) {
 			Secure: secure,
 		})
 	}
-	h.jar.SetCookies(u, list)
+	h.defaultJar().SetCookies(u, list)
 }
 
 // GetCookiesFor 获取指定 URL 域名下的所有 Cookie（多域名场景）。
@@ -67,7 +66,7 @@ func (h *HttpClient) GetCookiesFor(rawURL string) []*http.Cookie {
 	if err != nil {
 		return nil
 	}
-	return h.jar.Cookies(u)
+	return h.defaultJar().Cookies(u)
 }
 
 // GetCookieValueFor 获取指定 URL 域名下某个 Cookie 的值（多域名场景）。
@@ -89,8 +88,7 @@ func (h *HttpClient) SetCookiesFor(rawURL string, cookies map[string]string, opt
 	}
 	if len(opts) > 0 && opts[0] {
 		newJar, _ := cookiejar.New(nil)
-		h.jar = newJar
-		h.client.Jar = newJar
+		h.replaceJar(newJar)
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie
@@ -99,5 +97,38 @@ func (h *HttpClient) SetCookiesFor(rawURL string, cookies map[string]string, opt
 			Name: k, Value: v, Path: "/", Domain: u.Hostname(), Secure: secure,
 		})
 	}
-	h.jar.SetCookies(u, list)
+	h.defaultJar().SetCookies(u, list)
+}
+
+// defaultJar 返回默认会话的 Jar 快照，避免 reset 与请求并发读写指针。
+func (h *HttpClient) defaultJar() http.CookieJar {
+	if h.session != nil {
+		return h.session.getJar()
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.jar
+}
+
+// defaultClient 使用默认会话快照执行旧接口，复用 Transport。
+func (h *HttpClient) defaultClient() *http.Client {
+	return &http.Client{
+		Transport:     h.transport,
+		Timeout:       h.client.Timeout,
+		CheckRedirect: h.client.CheckRedirect,
+		Jar:           h.defaultJar(),
+	}
+}
+
+// replaceJar 重置显式会话的 Jar，使同一业务流程后续操作可见新 Cookie。
+func (h *HttpClient) replaceJar(jar http.CookieJar) {
+	if h.session != nil {
+		h.session.mu.Lock()
+		h.session.jar = jar
+		h.session.mu.Unlock()
+		return
+	}
+	h.mu.Lock()
+	h.jar = jar
+	h.mu.Unlock()
 }

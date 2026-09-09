@@ -55,7 +55,7 @@ func (h *HttpClient) DownloadFile(path, savePath string) error {
 	for k, v := range h.GetHeader() {
 		req.Header.Set(k, v)
 	}
-	resp, err := h.client.Do(req)
+	resp, err := h.defaultClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("download request failed: %w", err)
 	}
@@ -78,4 +78,3 @@ func (h *HttpClient) DownloadFile(path, savePath string) error {
 	h.LogInfo("File downloaded successfully", "path", savePath)
 	return nil
 }
-

@@ -31,7 +31,9 @@ func (s *Session) SetCookies(rawURL string, cookies map[string]string, reset ...
 	}
 	if len(reset) > 0 && reset[0] {
 		newJar, _ := cookiejar.New(nil)
+		s.mu.Lock()
 		s.jar = newJar
+		s.mu.Unlock()
 	}
 	secure := u.Scheme == "https"
 	var list []*http.Cookie
@@ -40,7 +42,7 @@ func (s *Session) SetCookies(rawURL string, cookies map[string]string, reset ...
 			Name: k, Value: v, Path: "/", Domain: u.Hostname(), Secure: secure,
 		})
 	}
-	s.jar.SetCookies(u, list)
+	s.getJar().SetCookies(u, list)
 }
 
 // GetCookies 获取指定 URL 域名下的所有 Cookie。
@@ -49,7 +51,7 @@ func (s *Session) GetCookies(rawURL string) []*http.Cookie {
 	if err != nil {
 		return nil
 	}
-	return s.jar.Cookies(u)
+	return s.getJar().Cookies(u)
 }
 
 // GetCookieValue 获取指定 URL 域名下某个 Cookie 的值。
@@ -80,3 +82,9 @@ func (s *Session) getHeaders() map[string]string {
 	return cp
 }
 
+// getJar 返回稳定的 CookieJar 快照；reset 不影响已经开始的请求。
+func (s *Session) getJar() http.CookieJar {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.jar
+}

@@ -667,3 +667,42 @@ func main() {
     fmt.Println("全部完成")
 }
 ```
+
+## 多地区、多账号并发请求
+
+使用 `Do` 传入完整 URL 和请求级 Header，不要在并发业务中调用
+`SetDomain`、`SetHeader` 或 `AddHeader` 切换地区或账号。全局默认 Header
+只适合通用字段，不应存储 Authorization、Cookie 或地区相关的 Origin/Referer。
+
+```go
+// httpClient 在启动阶段完成代理、JA3 和超时配置，运行期间复用。
+// session 按登录会话创建并保存，后续登录步骤复用同一个 session。
+session := client.NewSession()
+ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+
+response, err := httpClient.Do(ctx, http.MethodPost, targetURL,
+    strings.NewReader(payload), client.RequestOptions{
+        Session: session,
+        Headers: http.Header{
+            "Content-Type": {"application/json"},
+            "Authorization": {authorization},
+        },
+    })
+if err != nil {
+    return err
+}
+if response.StatusCode < 200 || response.StatusCode >= 300 {
+    return fmt.Errorf("HTTP status: %d", response.StatusCode)
+}
+// 使用 response.Body 和 response.Header 处理业务结果。
+```
+
+- `Do` 不自动重试，不记录请求/响应正文和认证头；非 2xx 返回状态码，由调用方判断。
+- 未指定 Session 时不自动携带或保存 Cookie；各 Session 共享底层 Transport。
+- Header 优先级：公共默认值 < Session < 当前请求；传入空 Header 值列表可删除默认项。
+- Context 覆盖并发排队及网络请求；`NoRedirect` 可禁止自动跟随重定向。
+- Cookie reset 后，新请求使用新 Jar，已开始的请求继续使用旧 Jar。
+- 代理、JA3、默认超时只能在开始请求前配置；不同代理/指纹使用不同 Transport。
+- 旧 `DoGet`/`DoPost` 等接口继续保持默认会话及原重试行为，逐步迁移到 `Do`。
+- 本库不管理业务会话的过期、地区归属和账号权限，由调用方负责。

@@ -4,8 +4,13 @@ import "net/textproto"
 
 // SetHeader 批量设置请求头（已存在的 key 会被覆盖）。
 func (h *HttpClient) SetHeader(headers map[string]string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.headers == nil {
+		h.headers = make(map[string]string)
+	}
 	for k, v := range headers {
-		h.setHeaderInternal(k, v)
+		h.headers[textproto.CanonicalMIMEHeaderKey(k)] = v
 	}
 }
 
@@ -41,4 +46,3 @@ func (h *HttpClient) GetHeader() map[string]string {
 	}
 	return cp
 }
-
